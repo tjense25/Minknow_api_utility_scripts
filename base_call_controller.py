@@ -54,8 +54,13 @@ def update_deque(job_deque, basecall_dirs, fast5s_called_dict, job_number_dict):
             input_list = sample_dir + '/fastq/tmp/fast5_list_%d.txt' % job_number_dict[sample_dir]
             save_dir = sample_dir + '/fastq/' + 'guppy_job_%d' % job_number_dict[sample_dir]
             print('\n'.join(list(new_fast5s), file = fast5_file))
-            command = "guppy_basecaller --disable_pings --input_path {} --input_file_list {} --save_path {} --min_qscore 7 -c dna_r9.4.1_450bps_hac_prom.cfg --device auto".format(fast5_dir, input_list, save_dir)
+            command = ("guppy_basecaller --disable_pings" 
+                        "--input_path {} --input_file_list {}"
+                        "--save_path {} --min_qscore 7 "
+                        "-c dna_r9.4.1_450bps_hac_prom.cfg " 
+                        "--compress_fastq -q 20000 --device auto").format(fast5_dir, input_list, save_dir)
             job_number_dict[sample_dir] += 1
+            fast5s_called_dict[sample_id] = current_fast5_files
 
 def main():
     args = parse_args()
