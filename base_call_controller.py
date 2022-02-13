@@ -1,6 +1,6 @@
 import argparse
-from collections import deque
 from collections import defaultdict
+import multiprocessing
 import sys
 import os
 import glob
@@ -45,7 +45,17 @@ def get_sample_basecall_dirs(experiment_dir, num_basecall):
             if len(basecall_samples) >= num_basecall: return basecall_samples
         time.sleep(120) #wait 2 minutes for data generation to begin and then check fast5 files again
 
-def update_deque(job_deque, basecall_dirs, fast5s_called_dict, job_number_dict):
+def run_job(job_command):
+    process_id = multiprocessing.Process()._identity[1]
+    #ensure the parallel jobs are using different gpu devices
+    if process_id == 1: 
+        job_command += " --device CUDA:0"
+    elif process_id == 2:
+        job_command += " --device CUDA:1"
+    os.system(job_command)
+
+def update_job_list(basecall_dirs, fast5s_called_dict, job_number_dict):
+    job_list = []
     for sample_dir in basecall_dirs:
         fast5_dir = sample_dir + '/fast5'
         current_fast5_files =  set(os.listdir(sample_dir))
@@ -58,31 +68,50 @@ def update_deque(job_deque, basecall_dirs, fast5s_called_dict, job_number_dict):
                         "--input_path {} --input_file_list {}"
                         "--save_path {} --min_qscore 7 "
                         "-c dna_r9.4.1_450bps_hac_prom.cfg " 
-                        "--compress_fastq -q 20000 --device auto").format(fast5_dir, input_list, save_dir)
+                        "--compress_fastq -q 50000 ").format(fast5_dir, input_list, save_dir)
+            job_list.append(command)
             job_number_dict[sample_dir] += 1
             fast5s_called_dict[sample_id] = current_fast5_files
+    return job_list
+
+def initialize_fast5_dir(basecall_dirs, fast5s_called_dict, job_number_dict):
+    for sample_dir in basecall_dirs:
+        if not os.path.exists(sample_dir + '/fastq/tmp'):
+            return
+
+        fast5_file_lists = os.listdir(sample_dir + '/fastq/tmp'):
+        for fast5_file_list in fast5_file_lists:
+            with open(fast5_file_list, 'r') as f_in:
+                for line in f_in:
+                    fast5s_called_dict[sample_dir].add(line.strip())
+            job_num_dict[sample_dir] += 1
+
 
 def main():
     args = parse_args()
-    basecall_dirs = get_sample_basecall_dirs(args.experiment_dir, args.num_basecall_samples):
-    for basecall_dir in basecall_dirs:
-        os.mkdir(basecall_dir + '/fastq')
-        os.mkdir(basecall_dir + '/fastq/tmp')
-
+    basecall_dirs = get_sample_basecall_dirs(args.experiment_dir, args.num_basecall_samples)
     fast5s_called_dict = defaultdict(set)
     job_number_dict = defaultdict(int)
-    job_deque = deque()
-    while len(job_deque) < args.num_basecall_samples:
-        update_deque(job_deque, basecall_dirs, fast5s_called_dict, job_number_dict)
+    fast5s_called_dict = initialize_fast5_dir(basecall_dirs, fast5s_called_dict, job_number_dict)
+    for basecall_dir in basecall_dirs:
+        if not os.path.exists(basecall_dir + '/fastq'):
+            os.mkdir(basecall_dir + '/fastq')
+        if not os.path.exists(basecall_dir + '/fastq/tmp'):
+            os.mkdir(basecall_dir + '/fastq/tmp')
+
+    job_list = []
+    while len(job_list) < args.num_basecall_samples:
+        job_list = update_job_list(basecall_dirs, fast5s_called_dict, job_number_dict)
         time.sleep(200) #wait about 3 minutes for more fast5s to be written
 
     # now jobs are in queue
-    while len(job_deque) > 0:
-        while len(job_deque) > 0:
-            while len(job_deque) > 0:
-                job = job_deque.popleft()
-                return_code = os.system(job)
-            update_deque(job_deque, basecall_dirs, fast5s_called_dict, job_number_dict)
+    pool = multiprocessing.Pool(processes = 2)
+    while len(job_list) > 0:
+        while len(job_list) > 0:
+            pool.map(run_job, job_list)
+            job_list = update_job_list(basecall_dirs, fast5s_called_dict, job_number_dict)
 
-        time.sleep(300) #wait 5 minutes to see if any more fast5s are written
-        update_deque(job_deque, basecall_dirs, fast5s_called_dict, job_number_dict)
+        time.sleep(600) #wait 10 minutes to see if any more fast5s are written
+        job_list = update_job_list(basecall_dirs, fast5s_called_dict, job_number_dict)
+    print("completed all basecalling job. Quitting now".
+    print("Have a wonderful day UwU")
