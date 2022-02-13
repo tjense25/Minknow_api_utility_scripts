@@ -27,22 +27,36 @@ def main():
         target_positions = set(args.flowcell_positions.strip().split(','))
 
 
-    # Find a list of currently available sequencing positions.
-    positions = manager.flow_cell_positions()
+    running_samples = set()
+    finished_samples = set()
 
-    for pos in positions:
-        if target_positions == None or pos.name in target_positions:
-            connection = pos.connect()
+    while True:
+        # Find a list of currently available sequencing positions.
+        positions = manager.flow_cell_positions()
 
-            # check if flowcell is currently sequencing
-            # 3 is enum code for PROCESSING
-            if connection.acquisition.current_status().status != 3: continue
+        for pos in positions:
+            if pos.name in finished_samples: continue
+            if target_positions == None or pos.name in target_positions:
+                connection = pos.connect()
 
-            current_yield = connection.acquisition.get_acquisition_info().yield_summary.estimated_selected_bases
-            print("Flowcell at position %s currently sequencing, current yield: %.2f Gb" % (pos.name, current_yield / 1000000000))
-            if current_yield > target_yield:
-                print("Sequencing run in %s has sequenced an estimated %.2f Gb, stopping run." % (pos.name, current_yield / 1000000000))
-                connection.protocol.stop_protocol()
+                # check if flowcell is currently sequencing
+                # 3 is enum code for PROCESSING
+                if connection.acquisition.current_status().status != 3: continue
+
+                running_samples.add(pos.name)
+
+                current_yield = connection.acquisition.get_acquisition_info().yield_summary.estimated_selected_bases
+                print("Flowcell at position %s currently sequencing, current yield: %.2f Gb" % (pos.name, current_yield / 1000000000))
+                if current_yield > target_yield:
+                    print("Sequencing run in %s has sequenced an estimated %.2f Gb, stopping run." % (pos.name, current_yield / 1000000000))
+                    connection.protocol.stop_protocol()
+                    finished_samples.add(pos.name)
+
+        if len(running_samples) == len(finished_samples):
+            print("All sequencing jobs finished. Qutting now.")
+            return
+
+        time.sleep(1800) # wait 30 minutes and then check yield again
 
 
 if __name__ == "__main__":
