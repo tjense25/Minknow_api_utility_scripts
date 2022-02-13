@@ -29,6 +29,12 @@ def parse_args():
         default=8,
         help="max number of samples to basecall, will not basecall samples that are already being basecalled through minknow",
     )
+    parser.add_argument(
+        "--num_gpus",
+        type=int,
+        default=2,
+        help="Number of CUDA gpu decies on machine. (Prom_beta has 2, p48 has 4) [Defaults to 2] "
+    )
     args = parser.parse_args()
     return args
 
@@ -48,10 +54,7 @@ def get_sample_basecall_dirs(experiment_dir, num_basecall):
 def run_job(job_command):
     process_id = multiprocessing.Process()._identity[1]
     #ensure the parallel jobs are using different gpu devices
-    if process_id == 1: 
-        job_command += " --device CUDA:0"
-    elif process_id == 2:
-        job_command += " --device CUDA:1"
+    job_command += " --device CUDA:{}".format(process_id - 1)
     os.system(job_command)
 
 def update_job_list(basecall_dirs, fast5s_called_dict, job_number_dict):
@@ -105,7 +108,7 @@ def main():
         time.sleep(200) #wait about 3 minutes for more fast5s to be written
 
     # now jobs are in queue
-    pool = multiprocessing.Pool(processes = 2)
+    pool = multiprocessing.Pool(processes = args.num_gpus)
     while len(job_list) > 0:
         while len(job_list) > 0:
             pool.map(run_job, job_list)
