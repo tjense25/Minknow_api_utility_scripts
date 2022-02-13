@@ -39,16 +39,16 @@ def parse_args():
     return args
 
 def get_sample_basecall_dirs(experiment_dir, num_basecall):
-    basecall_samples = set()
+    basecall_dirs = set()
     while True:
         samples = os.listdir(experiment_dir)
-        fast5_dirs = [ glob.glob(experimnet_dir + '/' + sample_dir + '/**/fast5*') for sample in samples ]
+        fast5_dirs = [ glob.glob(experiment_dir + '/' + sample + '/**/fast5*') for sample in samples ]
         for sample,fast5_list in zip(samples, fast5_dirs):
             if len(fast5_list) == 0 or any([ os.path.basename(x) == "fast5_pass" for x in fast5_list]): continue 
             elif any([os.path.basename(x) == "fast5" for x in fast5_list]): 
                 basecall_dirs.add(os.path.dirname(fast5_list[0]))
 
-            if len(basecall_samples) >= num_basecall: return basecall_samples
+            if len(basecall_dirs) >= num_basecall: return basecall_dirs
         time.sleep(120) #wait 2 minutes for data generation to begin and then check fast5 files again
 
 def run_job(job_command):
@@ -61,12 +61,13 @@ def update_job_list(basecall_dirs, fast5s_called_dict, job_number_dict):
     job_list = []
     for sample_dir in basecall_dirs:
         fast5_dir = sample_dir + '/fast5'
-        current_fast5_files =  set(os.listdir(sample_dir))
+        current_fast5_files =  set(os.listdir(fast5_dir))
         new_fast5s = current_fast5_files.difference(fast5s_called_dict[sample_dir])
         if len(new_fast5s) > 0:
             input_list = sample_dir + '/fastq/tmp/fast5_list_%d.txt' % job_number_dict[sample_dir]
+            with open(input_list, 'w') as input_file:
+                print('\n'.join(list(new_fast5s), file = input_file))
             save_dir = sample_dir + '/fastq/' + 'guppy_job_%d' % job_number_dict[sample_dir]
-            print('\n'.join(list(new_fast5s), file = fast5_file))
             command = ("guppy_basecaller --disable_pings" 
                         "--input_path {} --input_file_list {}"
                         "--save_path {} --min_qscore 7 "
@@ -74,7 +75,7 @@ def update_job_list(basecall_dirs, fast5s_called_dict, job_number_dict):
                         "--compress_fastq -q 50000 ").format(fast5_dir, input_list, save_dir)
             job_list.append(command)
             job_number_dict[sample_dir] += 1
-            fast5s_called_dict[sample_id] = current_fast5_files
+            fast5s_called_dict[sample_dir] = current_fast5_files
     return job_list
 
 def initialize_fast5_dir(basecall_dirs, fast5s_called_dict, job_number_dict):
