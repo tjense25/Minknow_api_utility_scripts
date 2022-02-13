@@ -32,15 +32,14 @@ def main():
 
     for pos in positions:
         if target_positions == None or pos.name in target_positions:
-            print("Checking position %s." % pos.name)
             connection = pos.connect()
 
             # check if flowcell is currently sequencing
             # 3 is enum code for PROCESSING
             if connection.acquisition.current_status().status != 3: continue
 
-            print("Flowcell at position %s currently sequencing, checking sequencing yield." % pos.name)
             current_yield = connection.acquisition.get_acquisition_info().yield_summary.estimated_selected_bases
+            print("Flowcell at position %s currently sequencing, current yield: %.2f Gb" % (pos.name, current_yield / 1000000000))
             if current_yield > target_yield:
                 print("Sequencing run in %s has sequenced an estimated %.2f Gb, stopping run." % (pos.name, current_yield / 1000000000))
                 connection.protocol.stop_protocol()

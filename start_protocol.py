@@ -49,11 +49,14 @@ def parse_args():
     )
     parser.add_argument(
         "--port",
-		default=9501,
+        default=9501,
         help="Port to connect to on host (defaults to standard MinKNOW port based on tls setting)",
     )
     parser.add_argument(
-        "--no-tls", help="Disable tls connection", default=False, action="store_true"
+        "--use_tls", 
+        help="Use a secure tls connection", 
+        default=False, 
+        action="store_true"
     )
     parser.add_argument(
         "--kit",
@@ -113,7 +116,7 @@ ParsedSampleSheetEntry = NamedTuple(
         ("position_id", Optional[str]),
         ("sample_id", Optional[str]),
         ("experiment_id", Optional[str]),
-	]
+    ]
 )
 
 class ExperimentSpec(object):
@@ -127,12 +130,10 @@ class ExperimentSpec(object):
 ExperimentSpecs = Sequence[ExperimentSpec]
 
 # Add sample sheet entry info to experiment_specs
-def add_sample_sheet_entries(experiment_specs, args):
+def add_sample_sheet_entries(experiment_specs : ExperimentSpecs, args):
     if args.sample_sheet:
-		sample_sheet = pd.read_tsv(args.sample_sheet)
-        
-
-        for i,sample in sample_sheet.iterrows():
+        sample_sheet = pd.read_table(args.sample_sheet)
+        for i,row in sample_sheet.iterrows():
             # Add the entry to the specs
             experiment_specs.append(
                 ExperimentSpec(
@@ -156,6 +157,7 @@ def add_position_to_specs(experiment_specs: ExperimentSpecs, position):
         print("Trying to start multiple experiments on the same flow cell")
         sys.exit(1)
 
+    print(matches)
     matches[0].position = position
 
 
@@ -185,7 +187,7 @@ def add_protocol_ids(experiment_specs, args):
             print("No flow cell present in position {}".format(spec.position))
             sys.exit(1)
 
-		product_code = flow_cell_info.product_code
+        product_code = flow_cell_info.product_code
 
         # Find the protocol identifier for the required protocol:
         protocol_info = protocols.find_protocol(
@@ -204,10 +206,11 @@ def main():
     args = parse_args()
 
     # Construct a manager using the host + port provided:
-    manager = Manager(host=args.host, port=args.port, use_tls=not args.no_tls)
+    manager = Manager(host=args.host, port=args.port, use_tls=args.use_tls)
 
     experiment_specs = []
     add_sample_sheet_entries(experiment_specs, args)
+    add_position_info(experiment_specs, manager)
     add_basecalling_info(experiment_specs, args)
     add_protocol_ids(experiment_specs, args)
 
@@ -221,12 +224,12 @@ def main():
            "--start_bias_voltage=-165",
            "--fast5=on",
            "--fast5_data",
-           "--generate_bulk_file=off",
-           "--active_channel_selection=on",
-           "--pore_reserve=0",
            "raw",
            "fastq",
            "vbz_compress",
+           "--generate_bulk_file=off",
+           "--active_channel_selection=on",
+           "--pore_reserve=0",
            "--fast5_reads_per_file={}".format(args.fast5_reads_per_file),
            "--mux_scan_period={}".format(args.mux_scan_period),
            "--guppy_filename=dna_r9.4.1_450bps_hac_prom.cfg",
@@ -248,9 +251,9 @@ def main():
                 "--fastq=off",
                 ])
 
-        user_info = protocol_pb2.ProtocolRunUserInfo()
+        user_info = ProtocolRunUserInfo()
         user_info.sample_id.value = spec.entry.sample_id
-        user_info.protocol_group_id = spec.entry.experiment_id
+        user_info.protocol_group_id.value = spec.entry.experiment_id
         position_connection.protocol.start_protocol(
                 identifier=spec.protocol_id,
                 args=protocol_arguments,
@@ -258,16 +261,11 @@ def main():
         )
 
         flow_cell_info = position_connection.device.get_flow_cell_info()
+        print(flow_cell_info)
 
         print("Started protocol:")
-        print("    run_id={}".format(run_id))
         print("    position={}".format(spec.position.name))
         print("    flow_cell_id={}".format(flow_cell_info.flow_cell_id))
-        print(
-            "    user_specified_flow_cell_id={}".format(
-                flow_cell_info.user_specified_flow_cell_id
-            )
-        )
 
 
 if __name__ == "__main__":
