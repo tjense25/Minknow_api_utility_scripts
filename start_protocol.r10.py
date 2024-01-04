@@ -17,7 +17,9 @@ python ./python/minknow_api/examples/start_protocol.py \
 import argparse
 import logging
 import pandas as pd
+import time
 import sys
+from collections import defaultdict
 
 # minknow_api.manager supplies "Manager" a wrapper around MinKNOW's Manager gRPC API with utilities
 # for querying sequencing positions + offline basecalling tools.
@@ -59,38 +61,26 @@ def parse_args():
         action="store_true"
     )
     parser.add_argument(
+        "--run_until",
+        help="start run until script (sample sheet must have target column)",
+        default=False,
+        action="store_true"
+    )
+    parser.add_argument(
         "--kit",
-        default="SQK-LSK110",
-        help="Sequencing kit used with the flow-cell, eg: SQK-LSK108",
+        default="SQK-LSK114",
+        help="Sequencing kit used with the flow-cell, eg: SQK-LSK114",
     )
     # SAMPLE SHEET
     parser.add_argument(
         "--sample_sheet",
         help="Filename of CSV sample sheet. ",
     )
-    parser.add_argument(
-        "--fast5_reads_per_file",
-        type=int,
-        default=10000,
-        help="set the number of reads combined into one Fast5 file.",
-    )
-    parser.add_argument(
-        "--fastq_reads_per_file",
-        type=int,
-        default=10000,
-        help="set the number of reads combined into one fastq file"
-    )
     # Experiment
-    parser.add_argument(
-        "--experiment_duration",
-        type=float,
-        default=48,
-        help="time spent sequencing (in hours)",
-    )
     parser.add_argument(
         "--mux_scan_period",
         type=float,
-        default=1.5,
+        default=2,
         help="number of hours before a mux scan takes place, enables active-channel-selection, "
         "ignored for Flongle flow-cells",
     )
@@ -103,7 +93,7 @@ def parse_args():
     parser.add_argument(
         "--min_qscore",
         type=int,
-        default=7,
+        default=10,
         help="qscore threshold above which read 'passes' basecalling"
     )
     args = parser.parse_args()
@@ -220,42 +210,40 @@ def main():
     add_basecalling_info(experiment_specs, args)
     add_protocol_ids(experiment_specs, args)
 
+    started_positions=[]
     # Now start the protocol(s):
     print("Starting protocol on %s positions" % len(experiment_specs))
     for spec in experiment_specs:
         position_connection = spec.position.connect()
-
         protocol_arguments = [
-           "--experiment_time={}".format(args.experiment_duration),
-           "--start_bias_voltage=-165",
-           "--fast5=on",
-           "--fast5_data",
-           "raw",
-           "fastq",
-           "vbz_compress",
-           "--min_read_length=200",
+           "--fast5=off",
+           "--pod5=on",
+           "--fastq=off",
            "--generate_bulk_file=off",
            "--active_channel_selection=on",
+           "--pod5_reads_per_file=10000",
+           "--mux_scan_period=2",
            "--pore_reserve=off",
-           "--fast5_reads_per_file={}".format(args.fast5_reads_per_file),
-           "--mux_scan_period={}".format(args.mux_scan_period),
-           "--guppy_filename=dna_r9.4.1_450bps_hac_prom.cfg",
-           "--bam=off",
+           "--min_read_length=200",
+           "--kit",
+           "SQK-LSK114-XL"
         ]
         if spec.basecalling:
             protocol_arguments.extend([
                 "--base_calling=on",
-                "--fastq=on",
-                "--fastq_data",
-                "compress",
-                "--fastq_reads_per_file={}".format(args.fastq_reads_per_file),
+                "--fastq=off",
+                "--bam=on",
+                "--guppy_filename=dna_r10.4.1_e8.2_400bps_5khz_modbases_5hmc_5mc_cg_sup_prom.cfg",
                 "--read_filtering",
-                "min_qscore={}".format(args.min_qscore)
+                "min_qscore=10",
+                "--read_splitting",
+                "enable=on",
+                "--min_read_length=200"
             ])
         else:
             protocol_arguments.extend([
                 "--base_calling=off",
-                "--fastq=off",
+                "--bam=off"
                 ])
 
         user_info = ProtocolRunUserInfo()
@@ -268,10 +256,64 @@ def main():
         )
 
         flow_cell_info = position_connection.device.get_flow_cell_info()
+        started_positions.append(spec.position.name)
 
         print("Started protocol:")
         print("    position={}".format(spec.position.name))
         print("    flow_cell_id={}".format(flow_cell_info.flow_cell_id))
+    
+    if args.run_until:
+        time.sleep(900) # wait 10 minutes and then start checking yield
+        sample_sheet = pd.read_table(args.sample_sheet)
+        target_yields = {}
+        target_yields = defaultdict(lambda:120 * 1e9)
+        for i,row in sample_sheet.iterrows():
+            target_yields[row.position_id] = row.target * 1e9
+
+        running_samples = set()
+        finished_samples = set()
+
+        while True:
+            # Find a list of currently available sequencing positions.
+            fc_positions = manager.flow_cell_positions()
+
+            total_yield = 0
+            for pos in fc_positions:
+                if pos.name in finished_samples: continue
+                if pos.name in started_positions:
+                    connection = pos.connect()
+
+                    # check if flowcell is currently sequencing
+                    # 3 is enum code for PROCESSING
+                    if connection.acquisition.current_status().status != 3: continue
+                    if pos.name in finished_samples: continue
+
+                    running_samples.add(pos.name)
+
+                    current_yield = connection.acquisition.get_acquisition_info().yield_summary.estimated_selected_bases
+                    current_pores = connection.acquisition.get_acquisition_info().bream_info.mux_scan_results[-1].counts['single_pore']
+
+                    total_yield += current_yield
+                    print("Flowcell at position %s currently sequencing, current yield: %.2f Gb, target yield: %.1f Gb, pores available: %d" % (pos.name, current_yield / 1e9, target_yields[pos.name]/1e9, current_pores))
+                    if current_yield > target_yields[pos.name] and current_pores > 2000:
+                        print("Sequencing run in %s has sequenced an estimated %.2f Gb. Flowcell has %d pores left. Stopping run." % (pos.name, current_yield / 1e9, current_pores))
+                        connection.protocol.stop_protocol()
+                        finished_samples.add(pos.name)
+                    elif current_yield > target_yields[pos.name]:
+                        print("Sequencing run in %s has hit target, with an estimated %.2f Gb, With only %d pores left, continuing sequencing to exhaustion." % (pos.name, current_yield / 1e9, current_pores ))
+                        finished_samples.add(pos.name)
+
+            if len(running_samples) == len(finished_samples):
+                print("All sequencing jobs finished.")
+                print("Estimated %.2f Gb sequenced" % (total_yield / 1000000000))
+                print("Qutting now. Have a nice day :)")
+                return
+
+            print("{} samples currently sequencing.".format(len(running_samples) - len(finished_samples)))
+            print("Estimated %.2f Gb sequenced." % (total_yield / 1000000000))
+            print("{} runs  completed.".format(len(finished_samples)))
+            print("Waiting 30 minutes to check progress again.")
+            time.sleep(1800) # wait 30 minutes and then check yield again
 
 
 if __name__ == "__main__":
