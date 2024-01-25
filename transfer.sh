@@ -1,5 +1,3 @@
-#rsync -rlvtW  --progress --remove-source-files ./RUSHAD_P3 $scg:/oak/stanford/groups/smontgom/tannerj/RUSH_AD/promethion_data/
-
 source_dir="/data/RUSHAD_P12"
 #dest_dir="$scg:/oak/stanford/groups/smontgom/tannerj/RUSH_AD/promethion_data"
 dest_dir="$scg:/oak/stanford/groups/smontgom/tannerj/RUSH_AD/promethion_data/RUSHAD_P12"
