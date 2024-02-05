@@ -167,9 +167,7 @@ def add_basecalling_info(experiment_specs: ExperimentSpecs, args):
 
 # Determine which protocol to run for each experiment, and add its ID to experiment_specs
 def add_protocol_ids(experiment_specs, args):
-    print(experiment_specs)
     for spec in experiment_specs:
-        print(spec)
         # Connect to the sequencing position:
         print(spec.position)
         position_connection = spec.position.connect()
@@ -178,7 +176,7 @@ def add_protocol_ids(experiment_specs, args):
         flow_cell_info = position_connection.device.get_flow_cell_info()
         if not flow_cell_info.has_flow_cell:
             print("No flow cell present in position {}".format(spec.position))
-            sys.exit(1)
+            continue
 
         print(flow_cell_info)
         product_code = flow_cell_info.product_code
@@ -210,11 +208,17 @@ def main():
     add_basecalling_info(experiment_specs, args)
     add_protocol_ids(experiment_specs, args)
 
-    started_positions=[]
+    sample_positions=[]
     # Now start the protocol(s):
     print("Starting protocol on %s positions" % len(experiment_specs))
     for spec in experiment_specs:
         position_connection = spec.position.connect()
+        sample_positions.append(spec.position.name)
+        flow_cell_info = position_connection.device.get_flow_cell_info()
+        if not flow_cell_info.has_flow_cell:
+            continue
+        if position_connection.acquisition.current_status().status == 3: continue #flowcell is already processing
+        
         protocol_arguments = [
            "--fast5=off",
            "--pod5=on",
@@ -256,7 +260,6 @@ def main():
         )
 
         flow_cell_info = position_connection.device.get_flow_cell_info()
-        started_positions.append(spec.position.name)
 
         print("Started protocol:")
         print("    position={}".format(spec.position.name))
@@ -280,11 +283,14 @@ def main():
             total_yield = 0
             for pos in fc_positions:
                 if pos.name in finished_samples: continue
-                if pos.name in started_positions:
+                if pos.name in sample_positions:
                     connection = pos.connect()
 
                     # check if flowcell is currently sequencing
                     # 3 is enum code for PROCESSING
+                    flow_cell_info = connection.device.get_flow_cell_info()
+                    if not flow_cell_info.has_flow_cell:
+                        continue
                     if connection.acquisition.current_status().status != 3: continue
                     if pos.name in finished_samples: continue
 
