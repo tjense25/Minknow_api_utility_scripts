@@ -55,15 +55,30 @@ def run_job(job_command):
 def initialize_jobs_from_list(pod5_list_file, flowcell_pore):
     job_list = []
     pod5_dirs = [ line.strip() for line in open(pod5_list_file, 'r') ] 
-    model = {"r10":"/data/tanner_scripts/DORADO/dorado-0.3.4-linux-x64/bin/dna_r10.4.1_e8.2_400bps_sup@v4.2.0",
-            "r9":"/data/tanner_scripts/DORADO/dorado-0.3.4-linux-x64/bin/dna_r9.4.1_e8_sup@v3.3"}
+    #model = {"r10":"/data/tanner_scripts/DORADO/dorado-0.3.4-linux-x64/bin/dna_r10.4.1_e8.2_400bps_sup@v4.2.0",
+    #        "r9":"/data/tanner_scripts/DORADO/dorado-0.3.4-linux-x64/bin/dna_r9.4.1_e8_sup@v3.3"}
+    #model = {"r10":"/data/tanner_scripts/dorado-0.5.2-linux-x64/bin/dna_r10.4.1_e8.2_400bps_sup@v4.3.0_5mCG_5hmCG@v1"}
+    model = {"r10":"sup,5mCG_5hmCG"}
     for pod5_dir in pod5_dirs:
         out_bam = os.path.dirname(pod5_dir) + "/" + os.path.basename(pod5_dir) + ".bam"
-        command = ("/data/tanner_scripts/DORADO/dorado-0.3.4-linux-x64/bin/dorado basecaller -r " +
+        out_message = os.path.dirname(pod5_dir) + "/" + os.path.basename(pod5_dir) + ".BASECALLING_COMPLETE"
+        checkpoint_bam = out_bam.strip('.bam') + ".checkpoint.bam"
+        command = ("/data/tanner_scripts/dorado-0.6.1-linux-x64/bin/dorado basecaller -r " +
             " {} "
             " {} "
-            " --modified-bases 5mCG_5hmCG "
-            " > {}").format(model[flowcell_pore],pod5_dir, out_bam)
+            " > {} "
+            " && touch {} ").format(model[flowcell_pore],pod5_dir, out_bam, out_message)
+        if os.path.isfile(out_message): continue
+        if os.path.isfile(out_bam) and os.path.getsize(out_bam) > 0:
+            os.rename(out_bam, checkpoint_bam) 
+        if os.path.isfile(checkpoint_bam) and os.path.getsize(checkpoint_bam) > 0:
+            command = ("/data/tanner_scripts/dorado-0.6.1-linux-x64/bin/dorado basecaller -r " +
+                " {} "
+                " {} "
+                " --resume-from {} "
+                " > {} "
+                " && touch {} "
+                " && rm {} ").format(model[flowcell_pore],pod5_dir,checkpoint_bam,out_bam,out_message,checkpoint_bam)
         job_list.append(command)
     return job_list
     

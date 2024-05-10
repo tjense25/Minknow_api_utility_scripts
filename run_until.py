@@ -41,7 +41,9 @@ def main():
 
     running_samples = set()
     finished_samples = set()
+    #time.sleep(800)
 
+    
     while True:
         # Find a list of currently available sequencing positions.
         positions = manager.flow_cell_positions()
